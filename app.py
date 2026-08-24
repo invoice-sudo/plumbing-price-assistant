@@ -202,57 +202,6 @@ def append_rows(range_name, rows):
 
 
 # -----------------------------
-# INITIALIZE SHEET HEADERS
-# -----------------------------
-
-if st.button("Set Up Database Headers"):
-    append_rows(
-        "'Invoices'!A:G",
-        [[
-            "drive_file_id",
-            "filename",
-            "vendor",
-            "invoice_number",
-            "po_number",
-            "status",
-            "processed_at",
-        ]],
-    )
-
-    append_rows(
-        "'Line Items'!A:H",
-        [[
-            "drive_file_id",
-            "filename",
-            "vendor",
-            "invoice_number",
-            "description",
-            "quantity",
-            "unit_price",
-            "confidence",
-        ]],
-    )
-
-    append_rows(
-        "'Review Queue'!A:H",
-        [[
-            "drive_file_id",
-            "filename",
-            "vendor",
-            "invoice_number",
-            "description",
-            "quantity",
-            "unit_price",
-            "confidence",
-        ]],
-    )
-
-    st.success("Database headers added.")
-
-
-st.divider()
-
-# -----------------------------
 # FIND NEW INVOICES
 # -----------------------------
 
@@ -289,137 +238,181 @@ with col3:
 st.divider()
 
 # -----------------------------
-# PROCESS ONE INVOICE
+# PROCESS BATCH
 # -----------------------------
 
-if new_pdfs:
-    selected_file = new_pdfs[0]
+batch_size = min(10, len(new_pdfs))
 
+if new_pdfs:
     st.write(
-        "Next invoice:",
-        selected_file["name"],
+        f"Ready to process up to {batch_size} new invoice(s)."
     )
 
-    if st.button("Analyze ONE New Invoice"):
-        try:
-            with st.spinner(
-                f"Analyzing {selected_file['name']}..."
-            ):
-                pdf_buffer = download_pdf(
-                    selected_file["id"]
-                )
+    if st.button("Process Next 10 New Invoices"):
 
-                invoice_text = extract_pdf_text(
-                    pdf_buffer
-                )
+        batch = new_pdfs[:10]
 
-                if not invoice_text.strip():
-                    raise ValueError(
-                        "No readable text found in PDF."
+        progress = st.progress(0)
+
+        processed_count = 0
+        failed_count = 0
+        review_count = 0
+
+        results_summary = []
+
+        for index, selected_file in enumerate(batch):
+
+            try:
+                with st.spinner(
+                    f"Analyzing {selected_file['name']}..."
+                ):
+
+                    pdf_buffer = download_pdf(
+                        selected_file["id"]
                     )
 
-                data = analyze_invoice(
-                    invoice_text,
-                    selected_file["name"],
-                )
+                    invoice_text = extract_pdf_text(
+                        pdf_buffer
+                    )
 
-                vendor = data.get("vendor")
-                invoice_number = data.get(
-                    "invoice_number"
-                )
-                po_number = data.get("po_number")
-                items = data.get("items", [])
+                    if not invoice_text.strip():
+                        raise ValueError(
+                            "No readable text found in PDF."
+                        )
 
-                # Save invoice record
+                    data = analyze_invoice(
+                        invoice_text,
+                        selected_file["name"],
+                    )
+
+                    vendor = data.get("vendor")
+                    invoice_number = data.get(
+                        "invoice_number"
+                    )
+                    po_number = data.get("po_number")
+                    items = data.get("items", [])
+
+                    append_rows(
+                        "'Invoices'!A:G",
+                        [[
+                            selected_file["id"],
+                            selected_file["name"],
+                            vendor,
+                            invoice_number,
+                            po_number,
+                            "Processed",
+                            pd.Timestamp.utcnow().isoformat(),
+                        ]],
+                    )
+
+                    line_item_rows = []
+                    review_rows = []
+
+                    for item in items:
+                        description = item.get(
+                            "description"
+                        )
+                        quantity = item.get(
+                            "quantity"
+                        )
+                        unit_price = item.get(
+                            "unit_price"
+                        )
+                        confidence = item.get(
+                            "confidence",
+                            0,
+                        )
+
+                        row = [
+                            selected_file["id"],
+                            selected_file["name"],
+                            vendor,
+                            invoice_number,
+                            description,
+                            quantity,
+                            unit_price,
+                            confidence,
+                        ]
+
+                        if confidence < 0.85:
+                            review_rows.append(row)
+                        else:
+                            line_item_rows.append(row)
+
+                    append_rows(
+                        "'Line Items'!A:H",
+                        line_item_rows,
+                    )
+
+                    append_rows(
+                        "'Review Queue'!A:H",
+                        review_rows,
+                    )
+
+                    processed_count += 1
+                    review_count += len(review_rows)
+
+                    results_summary.append(
+                        {
+                            "File": selected_file["name"],
+                            "Vendor": vendor,
+                            "Invoice": invoice_number,
+                            "Items": len(items),
+                            "Needs Review": len(review_rows),
+                            "Status": "Processed",
+                        }
+                    )
+
+            except Exception as error:
+
+                failed_count += 1
+
                 append_rows(
                     "'Invoices'!A:G",
                     [[
                         selected_file["id"],
                         selected_file["name"],
-                        vendor,
-                        invoice_number,
-                        po_number,
-                        "Processed",
+                        None,
+                        None,
+                        None,
+                        "Failed",
                         pd.Timestamp.utcnow().isoformat(),
                     ]],
                 )
 
-                line_item_rows = []
-                review_rows = []
-
-                for item in items:
-                    description = item.get(
-                        "description"
-                    )
-                    quantity = item.get(
-                        "quantity"
-                    )
-                    unit_price = item.get(
-                        "unit_price"
-                    )
-                    confidence = item.get(
-                        "confidence",
-                        0,
-                    )
-
-                    row = [
-                        selected_file["id"],
-                        selected_file["name"],
-                        vendor,
-                        invoice_number,
-                        description,
-                        quantity,
-                        unit_price,
-                        confidence,
-                    ]
-
-                    if confidence < 0.85:
-                        review_rows.append(row)
-                    else:
-                        line_item_rows.append(row)
-
-                append_rows(
-                    "'Line Items'!A:H",
-                    line_item_rows,
+                results_summary.append(
+                    {
+                        "File": selected_file["name"],
+                        "Vendor": None,
+                        "Invoice": None,
+                        "Items": 0,
+                        "Needs Review": 0,
+                        "Status": "Failed",
+                    }
                 )
 
-                append_rows(
-                    "'Review Queue'!A:H",
-                    review_rows,
+                st.warning(
+                    f"Could not process {selected_file['name']}: {error}"
                 )
 
-            st.success(
-                "Invoice analyzed and saved!"
+            progress.progress(
+                (index + 1) / len(batch)
             )
 
-            st.subheader("Invoice Summary")
+        st.success(
+            f"Batch finished. "
+            f"{processed_count} processed, "
+            f"{failed_count} failed, "
+            f"{review_count} item(s) need review."
+        )
 
-            summary = {
-                "Vendor": vendor,
-                "Invoice Number": invoice_number,
-                "PO Number": po_number,
-                "Products Found": len(items),
-                "Needs Review": len(review_rows),
-            }
+        if results_summary:
+            st.subheader("Batch Results")
 
-            st.json(summary)
-
-            if items:
-                st.subheader("Extracted Products")
-
-                df = pd.DataFrame(items)
-
-                st.dataframe(
-                    df,
-                    use_container_width=True,
-                )
-
-        except Exception as error:
-            st.error(
-                "This invoice could not be processed."
+            st.dataframe(
+                pd.DataFrame(results_summary),
+                use_container_width=True,
             )
-
-            st.write(str(error))
 
 else:
     st.success(
