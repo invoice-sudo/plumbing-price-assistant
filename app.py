@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 st.title("🔧 Plumbing Price Assistant")
-st.write("Testing connection to your plumbing invoice Google Drive folder.")
+st.write("Testing Google Drive and Google Sheets connections.")
 
 google_info = json.loads(
     st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"]
@@ -20,7 +20,10 @@ google_info = json.loads(
 
 credentials = service_account.Credentials.from_service_account_info(
     google_info,
-    scopes=["https://www.googleapis.com/auth/drive.readonly"]
+    scopes=[
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
 )
 
 drive_service = build(
@@ -29,11 +32,17 @@ drive_service = build(
     credentials=credentials
 )
 
+sheets_service = build(
+    "sheets",
+    "v4",
+    credentials=credentials
+)
+
 folder_id = st.secrets["GOOGLE_DRIVE_FOLDER_ID"]
+sheet_id = st.secrets["GOOGLE_SHEET_ID"]
 
 
 if st.button("Find Invoice PDFs"):
-
     with st.spinner("Checking Google Drive..."):
 
         query = (
@@ -50,17 +59,31 @@ if st.button("Find Invoice PDFs"):
 
         files = results.get("files", [])
 
-    if files:
+    st.success(f"Connected! Found {len(files)} PDF invoice(s).")
 
-        st.success(
-            f"Connected! Found {len(files)} PDF invoice(s)."
-        )
+    for file in files:
+        st.write("📄", file["name"])
 
-        for file in files:
-            st.write("📄", file["name"])
 
-    else:
+st.divider()
 
-        st.warning(
-            "Connection worked, but no PDFs were found in the folder."
-        )
+if st.button("Test Google Sheet Connection"):
+    test_row = [
+        [
+            "TEST",
+            "Test connection",
+            "Not a real invoice"
+        ]
+    ]
+
+    sheets_service.spreadsheets().values().append(
+        spreadsheetId=sheet_id,
+        range="Invoices!A:C",
+        valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
+        body={"values": test_row}
+    ).execute()
+
+    st.success(
+        "Google Sheet connection works! A test row was added to the Invoices tab."
+    )
