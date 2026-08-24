@@ -67,23 +67,17 @@ if st.button("Find Invoice PDFs"):
 
 st.divider()
 
-if st.button("Test Google Sheet Connection"):
-    test_row = [
-        [
-            "TEST",
-            "Test connection",
-            "Not a real invoice"
-        ]
-    ]
+if st.button("Check Spreadsheet Access"):
+    try:
+        sheet_file = drive_service.files().get(
+            fileId=sheet_id,
+            fields="id,name,mimeType"
+        ).execute()
 
-    sheets_service.spreadsheets().values().append(
-        spreadsheetId=sheet_id,
-        range="Invoices!A:C",
-        valueInputOption="USER_ENTERED",
-        insertDataOption="INSERT_ROWS",
-        body={"values": test_row}
-    ).execute()
+        st.success(
+            f"Spreadsheet found: {sheet_file['name']}"
+        )
 
-    st.success(
-        "Google Sheet connection works! A test row was added to the Invoices tab."
-    )
+    except Exception as e:
+        st.error("The service account cannot see this spreadsheet.")
+        st.write(str(e))
