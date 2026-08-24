@@ -1,8 +1,9 @@
-import streamlit as st
-import pdfplumber
-import pandas as pd
 import json
-from openai import OpenAI
+
+import streamlit as st
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+
 
 st.set_page_config(
     page_title="Plumbing Price Assistant",
@@ -11,152 +12,56 @@ st.set_page_config(
 )
 
 st.title("🔧 Plumbing Price Assistant")
-st.write("AI-powered plumbing invoice and vendor price analysis.")
+st.write("Testing connection to your plumbing invoice Google Drive folder.")
 
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-
-st.divider()
-
-uploaded_file = st.file_uploader(
-    "Upload ONE invoice PDF for our first test",
-    type=["pdf"]
+# Read Google credentials from Streamlit Secrets
+google_info = json.loads(
+    st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"]
 )
 
-if uploaded_file is not None:
+credentials = service_account.Credentials.from_service_account_info(
+    google_info,
+    scopes=["https://www.googleapis.com/auth/drive.readonly"]
+)
 
-    st.success("Invoice uploaded successfully.")
+drive_service = build(
+    "drive",
+    "v3",
+    credentials=credentials
+)
 
-    if st.button("Analyze Invoice"):
+folder_id = st.secrets["GOOGLE_DRIVE_FOLDER_ID"]
 
-        with st.spinner("Reading and analyzing invoice..."):
 
-            # Read PDF
-            text = ""
+if st.button("Find Invoice PDFs"):
 
-            with pdfplumber.open(uploaded_file) as pdf:
+    with st.spinner("Checking Google Drive..."):
 
-                for page in pdf.pages:
+        query = (
+            f"'{folder_id}' in parents "
+            "and trashed = false "
+            "and mimeType = 'application/pdf'"
+        )
 
-                    page_text = page.extract_text()
+        results = drive_service.files().list(
+            q=query,
+            fields="files(id, name, modifiedTime)",
+            pageSize=1000
+        ).execute()
 
-                    if page_text:
-                        text += page_text + "\n"
+        files = results.get("files", [])
 
-            if not text.strip():
-                st.error("No readable text was found in this PDF.")
-                st.stop()
+    if files:
 
-            # Instructions for AI
-            prompt = f"""
-You are a controlled plumbing invoice extraction system.
+        st.success(
+            f"Connected! Found {len(files)} PDF invoice(s)."
+        )
 
-Extract the purchasing information from this invoice.
+        for file in files:
+            st.write("📄", file["name"])
 
-STRICT RULES:
+    else:
 
-- Only use information actually shown on the invoice.
-- NEVER invent information.
-- NEVER guess a price.
-- Do not include subtotal.
-- Do not include tax.
-- Do not include shipping or freight.
-- Do not include invoice totals.
-- Extract individual purchased products only.
-- Preserve the original product description.
-- Price should be the UNIT PRICE whenever clearly available.
-- If information is uncertain, use null.
-- Confidence must be between 0 and 1.
-
-Return ONLY valid JSON.
-
-Use exactly this structure:
-
-{{
-  "vendor": "vendor name or null",
-  "invoice_number": "invoice number or null",
-  "po_number": "PO number or null",
-  "items": [
-    {{
-      "description": "original product description",
-      "quantity": 1,
-      "unit_price": 0.00,
-      "confidence": 0.95
-    }}
-  ]
-}}
-
-INVOICE TEXT:
-
-{text}
-"""
-
-            response = client.responses.create(
-                model="gpt-5-mini",
-                input=prompt
-            )
-
-            output = response.output_text.strip()
-
-            # Remove markdown fences if model includes them
-            output = output.replace("```json", "")
-            output = output.replace("```", "")
-            output = output.strip()
-
-            try:
-                data = json.loads(output)
-
-            except json.JSONDecodeError:
-
-                st.error(
-                    "The AI returned information in an unexpected format."
-                )
-
-                st.code(output)
-
-                st.stop()
-
-        # Display invoice information
-        st.success("Invoice analyzed!")
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric(
-                "Vendor",
-                data.get("vendor") or "Unknown"
-            )
-
-        with col2:
-            st.metric(
-                "Invoice #",
-                data.get("invoice_number") or "Unknown"
-            )
-
-        with col3:
-            st.metric(
-                "PO #",
-                data.get("po_number") or "Unknown"
-            )
-
-        items = data.get("items", [])
-
-        if items:
-
-            df = pd.DataFrame(items)
-
-            df["Needs Review"] = (
-                df["confidence"].fillna(0) < 0.85
-            )
-
-            st.subheader("Products Found")
-
-            st.dataframe(
-                df,
-                use_container_width=True
-            )
-
-        else:
-
-            st.warning(
-                "No product line items were found."
-            )
+        st.warning(
+            "Connection worked, but no PDFs were found in the folder."
+        )
