@@ -67,17 +67,28 @@ if st.button("Find Invoice PDFs"):
 
 st.divider()
 
-if st.button("Check Spreadsheet Access"):
+if st.button("Test Write to Invoices Tab"):
     try:
-        sheet_file = drive_service.files().get(
-            fileId=sheet_id,
-            fields="id,name,mimeType"
+        test_row = [
+            [
+                "TEST",
+                "Test connection",
+                "Not a real invoice"
+            ]
+        ]
+
+        sheets_service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range="'Invoices'!A:C",
+            valueInputOption="USER_ENTERED",
+            insertDataOption="INSERT_ROWS",
+            body={"values": test_row}
         ).execute()
 
         st.success(
-            f"Spreadsheet found: {sheet_file['name']}"
+            "Write test worked! Check the Invoices tab in Google Sheets."
         )
 
     except Exception as e:
-        st.error("The service account cannot see this spreadsheet.")
+        st.error("Write test failed.")
         st.write(str(e))
