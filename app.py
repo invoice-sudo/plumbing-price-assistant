@@ -241,16 +241,16 @@ st.divider()
 # PROCESS BATCH
 # -----------------------------
 
-batch_size = min(10, len(new_pdfs))
+batch_size = min(50, len(new_pdfs))
 
 if new_pdfs:
     st.write(
         f"Ready to process up to {batch_size} new invoice(s)."
     )
 
-    if st.button("Process Next 10 New Invoices"):
+  if st.button("Process Next 50 New Invoices"):
 
-        batch = new_pdfs[:10]
+        batch = new_pdfs[:50]
 
         progress = st.progress(0)
 
