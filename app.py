@@ -795,6 +795,77 @@ def process_invoice_file(
 # PRICE COMPARISON
 # =========================================================
 
+def clean_key_value(value):
+    if value is None:
+        return ""
+
+    value = str(value).strip().lower()
+
+    value = re.sub(
+        r"\s+",
+        " ",
+        value,
+    )
+
+    return value
+
+
+def make_product_key(record):
+    product_type = clean_key_value(
+        record.get("product_type")
+    )
+
+    size = clean_key_value(
+        record.get("size")
+    )
+
+    material = clean_key_value(
+        record.get("material")
+    )
+
+    connection = clean_key_value(
+        record.get("connection_type")
+    )
+
+    length = clean_key_value(
+        record.get("length")
+    )
+
+    standard_product = clean_key_value(
+        record.get("standard_product")
+    )
+
+    # Prefer structured characteristics.
+    parts = [
+        product_type,
+        size,
+        material,
+        connection,
+        length,
+    ]
+
+    meaningful_parts = [
+        part
+        for part in parts
+        if part
+        and part not in [
+            "null",
+            "none",
+            "n/a",
+        ]
+    ]
+
+    # If AI gave us enough structured information,
+    # use that to match equivalent vendor descriptions.
+    if len(meaningful_parts) >= 2:
+        return "|".join(
+            meaningful_parts
+        )
+
+    # Fallback to standardized product name.
+    return standard_product
+
+
 def rebuild_price_comparison():
 
     rows = get_sheet_values(
@@ -805,7 +876,6 @@ def rebuild_price_comparison():
         return 0
 
     headers = rows[0]
-
     data_rows = rows[1:]
 
     records = []
@@ -828,9 +898,7 @@ def rebuild_price_comparison():
         )
 
         vendor = normalize_vendor(
-            record.get(
-                "vendor"
-            )
+            record.get("vendor")
         )
 
         price = record.get(
@@ -859,12 +927,44 @@ def rebuild_price_comparison():
         if match_confidence < 0.90:
             continue
 
+        product_key = make_product_key(
+            record
+        )
+
+        if not product_key:
+            continue
+
         records.append({
+            "product_key":
+                product_key,
+
             "standard_product":
                 standard_product,
 
+            "product_type":
+                record.get(
+                    "product_type"
+                ),
+
             "size":
-                record.get("size"),
+                record.get(
+                    "size"
+                ),
+
+            "material":
+                record.get(
+                    "material"
+                ),
+
+            "connection_type":
+                record.get(
+                    "connection_type"
+                ),
+
+            "length":
+                record.get(
+                    "length"
+                ),
 
             "manufacturer_part_number":
                 record.get(
@@ -888,10 +988,10 @@ def rebuild_price_comparison():
     comparison_rows = []
 
     grouped = df.groupby(
-        "standard_product"
+        "product_key"
     )
 
-    for product, group in grouped:
+    for product_key, group in grouped:
 
         prices = {}
 
@@ -907,8 +1007,9 @@ def rebuild_price_comparison():
 
             if vendor_rows.empty:
                 prices[vendor] = None
+
             else:
-                prices[vendor] = (
+                prices[vendor] = float(
                     vendor_rows[
                         "price"
                     ].min()
@@ -936,10 +1037,16 @@ def rebuild_price_comparison():
                 available.values()
             )
 
-            savings = (
-                highest_price
-                - cheapest_price
-            )
+            # Only show savings when at least
+            # two suppliers can actually be compared.
+            if len(available) >= 2:
+                savings = round(
+                    highest_price
+                    - cheapest_price,
+                    2,
+                )
+            else:
+                savings = ""
 
         else:
 
@@ -947,32 +1054,59 @@ def rebuild_price_comparison():
             cheapest_price = ""
             savings = ""
 
+        # Pick the most descriptive standardized name
+        # from the matched group.
+        product_names = [
+            str(value).strip()
+            for value
+            in group[
+                "standard_product"
+            ].tolist()
+            if str(value).strip()
+        ]
+
+        if product_names:
+            display_product = max(
+                product_names,
+                key=len,
+            )
+        else:
+            display_product = product_key
+
         first = group.iloc[0]
 
         comparison_rows.append([
-            product,
+            display_product,
+
             first.get(
                 "size",
                 "",
             ),
+
             first.get(
                 "manufacturer_part_number",
                 "",
             ),
+
             prices["Home Depot"]
-                if prices["Home Depot"]
-                is not None
-                else "",
+            if prices["Home Depot"]
+            is not None
+            else "",
+
             prices["Ferguson"]
-                if prices["Ferguson"]
-                is not None
-                else "",
+            if prices["Ferguson"]
+            is not None
+            else "",
+
             prices["WinSupply"]
-                if prices["WinSupply"]
-                is not None
-                else "",
+            if prices["WinSupply"]
+            is not None
+            else "",
+
             cheapest_supplier,
+
             cheapest_price,
+
             savings,
         ])
 
