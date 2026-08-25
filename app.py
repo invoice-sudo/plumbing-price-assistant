@@ -1175,8 +1175,404 @@ if batch is not None:
 
 
 # =========================================================
-# MANUAL COMPARISON REBUILD
+# BACKFILL EXISTING LINE ITEMS
 # =========================================================
+
+def standardize_existing_batch(items):
+
+    prompt = f"""
+You are a plumbing product normalization system.
+
+Your job is to standardize existing invoice line-item descriptions
+so prices from Home Depot, Ferguson, and WinSupply can be compared.
+
+STRICT RULES:
+
+- Do not invent product characteristics.
+- Do not guess manufacturer part numbers.
+- Do not combine products with different sizes.
+- Do not combine different materials.
+- Do not combine press and solder/sweat fittings.
+- Do not combine different lengths.
+- Do not combine different pack quantities when that changes the product.
+- If uncertain, lower match_confidence.
+- match_confidence must be between 0 and 1.
+- Keep products separate if you are unsure they are equivalent.
+
+Examples:
+
+"3/4 X 10 L HARD COPPER TUBE"
+and
+"3/4 IN X 10 FT TYPE L COPPER PIPE"
+
+may both standardize to:
+
+"3/4 in Type L Copper Tube 10 ft"
+
+But:
+
+"3/4 press 90 elbow"
+
+and
+
+"3/4 sweat 90 elbow"
+
+must remain different products.
+
+Return ONLY valid JSON.
+
+Return this structure:
+
+{{
+  "items": [
+    {{
+      "row_id": 0,
+      "standard_product": "standard product name",
+      "product_type": "type or null",
+      "size": "size or null",
+      "material": "material or null",
+      "connection_type": "connection type or null",
+      "length": "length or null",
+      "manufacturer_part_number": "part number or null",
+      "match_confidence": 0.95
+    }}
+  ]
+}}
+
+ITEMS TO STANDARDIZE:
+
+{json.dumps(items)}
+"""
+
+    response = openai_client.responses.create(
+        model="gpt-5-mini",
+        input=prompt,
+    )
+
+    output = response.output_text.strip()
+    output = output.replace("```json", "")
+    output = output.replace("```", "")
+    output = output.strip()
+
+    return json.loads(output)
+
+
+def get_pending_backfill_count():
+
+    rows = get_sheet_values(
+        "'Line Items'!A:P"
+    )
+
+    if len(rows) <= 1:
+        return 0
+
+    count = 0
+
+    for row in rows[1:]:
+
+        padded = row + [""] * (16 - len(row))
+
+        description = padded[4]
+        standard_product = padded[8]
+
+        if description and not standard_product:
+            count += 1
+
+    return count
+
+
+def backfill_existing_line_items(limit=None):
+
+    rows = get_sheet_values(
+        "'Line Items'!A:P"
+    )
+
+    if len(rows) <= 1:
+        return 0, 0, 0
+
+    headers = [
+        "drive_file_id",
+        "filename",
+        "vendor",
+        "invoice_number",
+        "description",
+        "quantity",
+        "unit_price",
+        "confidence",
+        "standard_product",
+        "product_type",
+        "size",
+        "material",
+        "connection_type",
+        "length",
+        "manufacturer_part_number",
+        "match_confidence",
+    ]
+
+    data_rows = []
+
+    for row in rows[1:]:
+        padded = row + [""] * (16 - len(row))
+        data_rows.append(padded[:16])
+
+    pending = []
+
+    for index, row in enumerate(data_rows):
+
+        description = row[4]
+        standard_product = row[8]
+
+        if description and not standard_product:
+
+            pending.append({
+                "row_index": index,
+                "vendor": row[2],
+                "description": description,
+            })
+
+    if limit is not None:
+        pending = pending[:limit]
+
+    if not pending:
+        comparison_count = rebuild_price_comparison()
+
+        return (
+            0,
+            0,
+            comparison_count,
+        )
+
+    updated_count = 0
+
+    # Process 20 products per AI request
+    batch_size = 20
+
+    progress = st.progress(0)
+    status = st.empty()
+
+    for start in range(
+        0,
+        len(pending),
+        batch_size,
+    ):
+
+        batch = pending[
+            start:start + batch_size
+        ]
+
+        ai_items = []
+
+        for item in batch:
+
+            ai_items.append({
+                "row_id":
+                    item["row_index"],
+
+                "vendor":
+                    item["vendor"],
+
+                "description":
+                    item["description"],
+            })
+
+        status.write(
+            f"Standardizing products "
+            f"{start + 1}–"
+            f"{min(start + batch_size, len(pending))} "
+            f"of {len(pending)}..."
+        )
+
+        result = standardize_existing_batch(
+            ai_items
+        )
+
+        normalized_items = result.get(
+            "items",
+            [],
+        )
+
+        for normalized in normalized_items:
+
+            try:
+                row_index = int(
+                    normalized["row_id"]
+                )
+            except Exception:
+                continue
+
+            if (
+                row_index < 0
+                or row_index >= len(data_rows)
+            ):
+                continue
+
+            data_rows[row_index][8] = (
+                normalized.get(
+                    "standard_product",
+                    "",
+                )
+            )
+
+            data_rows[row_index][9] = (
+                normalized.get(
+                    "product_type",
+                    "",
+                )
+            )
+
+            data_rows[row_index][10] = (
+                normalized.get(
+                    "size",
+                    "",
+                )
+            )
+
+            data_rows[row_index][11] = (
+                normalized.get(
+                    "material",
+                    "",
+                )
+            )
+
+            data_rows[row_index][12] = (
+                normalized.get(
+                    "connection_type",
+                    "",
+                )
+            )
+
+            data_rows[row_index][13] = (
+                normalized.get(
+                    "length",
+                    "",
+                )
+            )
+
+            data_rows[row_index][14] = (
+                normalized.get(
+                    "manufacturer_part_number",
+                    "",
+                )
+            )
+
+            data_rows[row_index][15] = (
+                normalized.get(
+                    "match_confidence",
+                    0,
+                )
+            )
+
+            updated_count += 1
+
+        progress.progress(
+            min(
+                (start + batch_size)
+                / len(pending),
+                1.0,
+            )
+        )
+
+    status.write(
+        "Saving standardized products..."
+    )
+
+    final_rows = [
+        headers
+    ] + data_rows
+
+    overwrite_sheet(
+        "'Line Items'!A:P",
+        final_rows,
+    )
+
+    status.write(
+        "Building supplier price comparison..."
+    )
+
+    comparison_count = (
+        rebuild_price_comparison()
+    )
+
+    status.empty()
+
+    remaining = (
+        get_pending_backfill_count()
+    )
+
+    return (
+        updated_count,
+        remaining,
+        comparison_count,
+    )
+
+
+# =========================================================
+# EXISTING DATA / PRICE COMPARISON
+# =========================================================
+
+st.divider()
+
+st.subheader(
+    "Existing Product Data"
+)
+
+pending_backfill = (
+    get_pending_backfill_count()
+)
+
+st.write(
+    f"{pending_backfill} existing line item(s) "
+    f"still need product standardization."
+)
+
+backfill_col1, backfill_col2 = st.columns(2)
+
+with backfill_col1:
+
+    backfill_50 = st.button(
+        "Standardize Next 50 Existing Items",
+        use_container_width=True,
+        disabled=pending_backfill == 0,
+    )
+
+with backfill_col2:
+
+    backfill_all = st.button(
+        "Standardize All Existing Items",
+        use_container_width=True,
+        disabled=pending_backfill == 0,
+    )
+
+
+if backfill_50:
+
+    updated, remaining, comparison_count = (
+        backfill_existing_line_items(
+            limit=50
+        )
+    )
+
+    st.success(
+        f"{updated} existing item(s) standardized. "
+        f"{remaining} remain. "
+        f"Price Comparison now contains "
+        f"{comparison_count} standardized products."
+    )
+
+
+if backfill_all:
+
+    updated, remaining, comparison_count = (
+        backfill_existing_line_items()
+    )
+
+    st.success(
+        f"{updated} existing item(s) standardized. "
+        f"{remaining} remain. "
+        f"Price Comparison now contains "
+        f"{comparison_count} standardized products."
+    )
+
 
 st.divider()
 
@@ -1189,9 +1585,7 @@ if st.button(
     use_container_width=True,
 ):
 
-    count = (
-        rebuild_price_comparison()
-    )
+    count = rebuild_price_comparison()
 
     st.success(
         f"Price Comparison updated "
