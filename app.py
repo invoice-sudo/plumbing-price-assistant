@@ -1,7 +1,7 @@
 import io
 import json
 import re
-
+import os
 import pandas as pd
 import pdfplumber
 import streamlit as st
@@ -32,8 +32,22 @@ st.write(
 # CONNECTIONS
 # =========================================================
 
+def get_secret(name):
+    value = os.getenv(name)
+
+    if value:
+        return value
+
+    try:
+        return st.secrets[name]
+    except Exception:
+        raise RuntimeError(
+            f"Missing required secret: {name}"
+        )
+
+
 google_info = json.loads(
-    st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"]
+    get_secret("GOOGLE_SERVICE_ACCOUNT_JSON")
 )
 
 credentials = service_account.Credentials.from_service_account_info(
@@ -57,12 +71,11 @@ sheets_service = build(
 )
 
 openai_client = OpenAI(
-    api_key=st.secrets["OPENAI_API_KEY"]
+    api_key=get_secret("OPENAI_API_KEY")
 )
 
-folder_id = st.secrets["GOOGLE_DRIVE_FOLDER_ID"]
-sheet_id = st.secrets["GOOGLE_SHEET_ID"]
-
+folder_id = get_secret("GOOGLE_DRIVE_FOLDER_ID")
+sheet_id = get_secret("GOOGLE_SHEET_ID")
 
 # =========================================================
 # GOOGLE SHEETS HELPERS
