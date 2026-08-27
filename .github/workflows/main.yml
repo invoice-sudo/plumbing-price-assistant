@@ -2,9 +2,9 @@ name: Process Plumbing Invoices
 
 on:
   workflow_dispatch:
-  
-schedule:
-  - cron: "*/5 * * * *"
+  schedule:
+    - cron: "*/5 * * * *"
+
 jobs:
   process-invoices:
     runs-on: ubuntu-latest
