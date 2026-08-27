@@ -4,8 +4,7 @@ on:
   workflow_dispatch:
 
   schedule:
-    - cron: "*/15 * * * *"
-
+  - cron: "7,22,37,52 * * * *"
 jobs:
   process-invoices:
     runs-on: ubuntu-latest
